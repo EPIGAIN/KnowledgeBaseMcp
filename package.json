@@ -1,0 +1,43 @@
+{
+  "name": "company-knowledge-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "knowledge-mcp": "./bin/kb.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "test:installation": "node scripts/test-installation.mjs",
+    "test:macos": "node scripts/test-macos-installation.mjs",
+    "start": "node bin/kb.mjs serve"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "^4.0.0"
+  },
+  "files": [
+    "bin/*.mjs",
+    "src/*.mjs",
+    "tracers/*.cjs",
+    "tracers/*.ps1",
+    "tracers/python/*.py",
+    "scripts/Install-OneClick.ps1",
+    "scripts/Register-ArchiveTask.ps1",
+    "scripts/Watch-Archive.ps1",
+    "scripts/Flush-Archive.ps1",
+    "scripts/check-dependencies.mjs",
+    "scripts/install-macos.sh",
+    "scripts/install-macos.mjs",
+    "README.md",
+    "README.en.md",
+    "docs/*.md",
+    "手动安装说明.md",
+    "一键安装.cmd",
+    "company-knowledge.example.md"
+  ]
+}

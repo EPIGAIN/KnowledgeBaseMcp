@@ -1,0 +1,25 @@
+* text=auto
+*.sh text eol=lf
+/workspace export-ignore
+/.local-private export-ignore
+/.test-output export-ignore
+/.kb-local export-ignore
+/.kb-terminal export-ignore
+/node_modules export-ignore
+*.local.md export-ignore
+/.demo* export-ignore
+/.nas-validation export-ignore
+/.claude export-ignore
+/.codex export-ignore
+/.mcp.json* export-ignore
+.env export-ignore
+.env.* export-ignore
+**/__pycache__ export-ignore
+*.pyc export-ignore
+*.log export-ignore
+*.backup export-ignore
+*.knowledge-backup-* export-ignore
+*.tgz export-ignore
+.DS_Store export-ignore
+Thumbs.db export-ignore
+Desktop.ini export-ignore

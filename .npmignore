@@ -1,0 +1,14 @@
+workspace/
+.local-private/
+.test-output/
+.kb-local/
+.kb-terminal/
+.demo*/
+**/__pycache__/
+*.pyc
+*.backup
+*.knowledge-backup-*
+*.local.md
+.DS_Store
+Thumbs.db
+Desktop.ini
