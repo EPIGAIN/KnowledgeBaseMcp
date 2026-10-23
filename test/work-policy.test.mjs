@@ -28,7 +28,7 @@ async function fixture(t) {
 test('shared gate: offline and private sessions do not ask for a name, read sources, or collect prompts', async t => {
   const { c, work, privateDir } = await fixture(t);
   const privateStart = await handleHook(c, { hook_event_name: 'SessionStart', cwd: privateDir });
-  assert.match(privateStart.hookSpecificOutput.additionalContext, /outside_work/); assert.equal(privateStart.systemMessage, undefined);
+  assert.deepEqual(privateStart, {});
   await fs.rename(c.filesRoot, c.filesRoot + '-offline');
   const start = await handleHook(c, { hook_event_name: 'UserPromptSubmit', cwd: work, prompt: 'private conversation' });
   assert.match(start.hookSpecificOutput.additionalContext, /offline/);
@@ -148,4 +148,26 @@ test('real terminal observer stops recording writes when the shared control is p
   await setWorkEnabled(c, true);
   assert.equal((await finishTerminal(c, { ...e, hook_event_name: 'PostToolUse', tool_response: { exit_code: 0 } })).status, 'discarded');
   assert.equal((await jobs(c)).length, 0);
+});
+
+test('normal turns and successful archives stay quiet; state changes and onboarding still notify', async t => {
+  const {c,work,privateDir}=await fixture(t); await setup(c,'Fixture Employee');
+  const e={client:'claude',cwd:work,session_id:'quiet-session'};
+  const start=await handleHook(c,{...e,hook_event_name:'SessionStart'});
+  assert.match(start.hookSpecificOutput.additionalContext,/员工/);
+  assert.ok(start.hookSpecificOutput.additionalContext.length<180);
+  for(let i=0;i<3;i++) assert.deepEqual(await handleHook(c,{...e,hook_event_name:'UserPromptSubmit',prompt:'Ordinary task '+i}),{});
+  const source=path.join(work,'quiet.md');await fs.writeFile(source,'work file');
+  const before=await fs.stat(source);
+  for(let i=0;i<2;i++) assert.deepEqual(await handleHook(c,{...e,hook_event_name:'PostToolUse',tool_name:'Read',tool_input:{file_path:source}}),{});
+  assert.equal((await jobs(c)).length,1);
+  const after=await fs.stat(source);assert.equal(before.mtimeMs,after.mtimeMs);assert.equal(before.ino,after.ino);
+  assert.equal(await fs.readFile(source,'utf8'),'work file');
+  await setWorkEnabled(c,false);
+  assert.match((await handleHook(c,{...e,hook_event_name:'UserPromptSubmit'})).hookSpecificOutput.additionalContext,/manual_pause/);
+  assert.deepEqual(await handleHook(c,{...e,hook_event_name:'UserPromptSubmit'}),{});
+  await setWorkEnabled(c,true);
+  assert.match((await handleHook(c,{...e,hook_event_name:'UserPromptSubmit'})).hookSpecificOutput.additionalContext,/已启用/);
+  assert.deepEqual(await handleHook(c,{...e,hook_event_name:'UserPromptSubmit'}),{});
+  assert.deepEqual(await handleHook(c,{...e,cwd:privateDir,hook_event_name:'SessionStart'}),{});
 });

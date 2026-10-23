@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { archiveFile, atomicJson, exists, readJson, safePath, sha, excludedPathPattern } from './storage.mjs';
+import { archiveFile, atomicJson, exists, readJson, safePath, sha, excludedPathPattern, sourceInfo } from './storage.mjs';
 import { evaluateGate } from './gate.mjs';
 
 const tracerRoot = fileURLToPath(new URL('../tracers/', import.meta.url));
@@ -108,8 +108,8 @@ async function collectOne(c, record) {
         if (item.kind === 'end') runtime.exitCode = item.exitCode;
         if (item.kind === 'paused') aborted = true;
         runtimes.set(item.runtime, runtime);
-        if (item.kind === 'write') {
-          if (typeof item.path !== 'string' || !/^[a-f0-9]{64}$/.test(item.sha256)) throw new Error('Invalid write event');
+        if (item.kind === 'write' || item.kind === 'conflict') {
+          if (typeof item.path !== 'string' || !Number.isFinite(item.time) || item.kind === 'write' && !/^[a-f0-9]{64}$/.test(item.sha256)) throw new Error('Invalid write event');
           observations.push(item);
         }
       } catch { malformed = true; }
@@ -136,6 +136,18 @@ async function collectOne(c, record) {
       latest.set(canonical, { ...item, beforeHashes: [...(previous?.beforeHashes || []), item.before] });
     }
     for (const item of latest.values()) {
+      if (item.kind === 'conflict') {
+        // Metadata changed after the observed operation, or output was left open.
+        // Never hash the later contents and attribute them to this command.
+        try {
+          await sourceInfo({ ...c, activeRoot: record.cwd }, item.path);
+          record.files.push({ path: item.path, status: 'needs_attention', error: 'SOURCE_CHANGED_AFTER_TRACE' });
+        } catch (error) {
+          const skipped = ['EXCLUDED_FILE', 'PATH_OUT_OF_SCOPE', 'ENOENT'].includes(error.code);
+          record.files.push({ path: item.path, status: skipped ? 'skipped' : 'needs_attention', error: error.code || error.message });
+        }
+        continue;
+      }
       if (item.beforeHashes.every(hash => hash === item.sha256)) { record.files.push({ path: item.path, status: 'unchanged' }); continue; }
       try {
         const job = await archiveFile({ ...c, activeRoot: record.cwd }, item.path, { client: record.client, tool: 'terminal_trace', trace: record.key, expectedSha256: item.sha256 });

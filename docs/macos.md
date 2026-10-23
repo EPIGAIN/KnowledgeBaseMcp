@@ -1,6 +1,6 @@
 # macOS 安装与验收
 
-macOS 安装器和 LaunchAgent 适配已加入。当前开发机为 Windows，已经通过跨平台代码测试、服务命令模拟和 Bash 语法检查，**尚未完成 Mac 真机、真实 Claude Code/Codex 模型会话、实际 SMB 挂载验收**。发布给 Mac 员工前应执行下面的真机检查。
+macOS 安装器和 LaunchAgent 已在 Mac 真机的本地模拟目录上通过隔离验证；真实 Claude Code 也已连接 MCP 并验证离线暂停。**实际 SMB 上传、Codex 模型会话以及本轮终端追踪优化的 Mac 回归仍待验收**。发布给 Mac 员工前应执行下面的真机检查。
 
 ## 安装
 

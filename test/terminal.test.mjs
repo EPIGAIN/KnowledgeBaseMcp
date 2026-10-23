@@ -160,3 +160,116 @@ test('an early terminal response waits for the PowerShell process before taking 
   const [job] = await jobs(c); assert.equal(job.status, 'stored');
   assert.equal(await fs.readFile(job.destination, 'utf8'), 'final');
 });
+
+test('Python keeps native file types and descriptor writes, closes and exceptions', async t => {
+  const {c,cwd,e}=await fixture(t);
+  const program=`import io,json,zipfile
+with open('native.md','w',encoding='utf-8') as f:
+    assert type(f) is io.TextIOWrapper
+    assert type(f.buffer) is io.BufferedWriter
+    assert type(f.buffer.raw) is io.FileIO
+    io.TextIOWrapper.write(f,'native descriptor')
+assert f.closed
+with open('native.bin','wb') as f:
+    assert type(f) is io.BufferedWriter
+    io.BufferedWriter.write(f,b'binary descriptor')
+with open('raw.bin','wb',buffering=0) as f:
+    assert type(f) is io.FileIO
+    io.FileIO.write(f,b'unbuffered remains native')
+try:
+    with open('exception.md','w') as f:
+        f.write('closed on exception')
+        raise ValueError('user exception')
+except ValueError as error:
+    assert str(error)=='user exception' and f.closed
+print('NATIVE_FILES_OK')
+`;
+  await fs.writeFile(path.join(cwd,'native.py'),program);
+  const execution=await execute(c,e,`${invoke(python)} native.py`);
+  assert.equal(execution.result.exitCode,undefined,execution.result.stderr);
+  assert.match(execution.result.stdout,/NATIVE_FILES_OK/);
+  assert.equal((await execution.finish()).status,'captured');
+  await flush(c);
+  const all=await jobs(c);
+  assert.deepEqual(all.map(j=>path.basename(j.metadata.source)).sort(),['exception.md','native.bin','native.md']);
+  for(const job of all) assert.deepEqual(await fs.readFile(job.destination),await fs.readFile(job.metadata.source));
+  assert.equal(await fs.readFile(path.join(cwd,'raw.bin'),'utf8'),'unbuffered remains native');
+});
+
+test('Node chunked fd and FileHandle writes do not rehash the growing file per chunk', async t => {
+  const {c,cwd,e}=await fixture(t); c.maxBytes=8*1024*1024;
+  const program=`const fs=require('node:fs');
+const chunk=Buffer.alloc(32768,65);
+const fd=fs.openSync('chunked.bin','w');
+for(let i=0;i<128;i++)fs.writeSync(fd,chunk);
+fs.closeSync(fd);
+(async()=>{const h=await fs.promises.open('promised.bin','w');for(let i=0;i<64;i++)await h.write(chunk);await h.close();console.log('CHUNKS_OK')})().catch(()=>process.exit(1));`;
+  await fs.writeFile(path.join(cwd,'chunks.cjs'),program);
+  const execution=await execute(c,e,`${invoke(process.execPath)} chunks.cjs`);
+  assert.equal(execution.result.exitCode,undefined,execution.result.stderr);
+  assert.equal((await execution.finish()).status,'captured');
+  const [recordFile]=await fs.readdir(path.join(c.stateDir,'terminal'));
+  const record=JSON.parse(await fs.readFile(path.join(c.stateDir,'terminal',recordFile),'utf8'));
+  const events=[];
+  for(const file of await fs.readdir(record.journalDir)) if(file.endsWith('.jsonl'))events.push(...(await fs.readFile(path.join(record.journalDir,file),'utf8')).trim().split('\n').map(JSON.parse));
+  const end=events.find(item=>item.kind==='end' && typeof item.hashReads==='number');
+  assert.ok(end,JSON.stringify(events));
+  assert.ok(end.hashReads<=4,`Whole-file reads: ${end.hashReads}`);
+  assert.ok(end.hashedBytes<=12*1024*1024,`Hashed bytes: ${end.hashedBytes}`);
+  await flush(c);
+  const all=await jobs(c); assert.equal(all.length,2);
+  for(const job of all) assert.deepEqual(await fs.readFile(job.destination),await fs.readFile(job.metadata.source));
+});
+
+test('Python leaves unfinished buffering to the program and skips uncertain output', async t => {
+  const {c,cwd,e}=await fixture(t);
+  const program=`import atexit,os
+f=open('still-open.md','w',encoding='utf-8')
+f.write('buffered data')
+atexit.register(lambda: print('BEFORE_FINALIZATION='+str(os.stat('still-open.md').st_size)))
+`;
+  await fs.writeFile(path.join(cwd,'unclosed.py'),program);
+  const baseline=await run(python,['unclosed.py'],{cwd,windowsHide:true});
+  const execution=await execute(c,e,`${invoke(python)} unclosed.py`);
+  assert.equal(execution.result.exitCode,undefined,execution.result.stderr);
+  assert.equal(execution.result.stdout.trim(),baseline.stdout.trim());
+  assert.equal(await fs.readFile(path.join(cwd,'still-open.md'),'utf8'),'buffered data');
+  assert.equal((await execution.finish()).status,'needs_attention');
+  assert.equal((await jobs(c)).length,0);
+});
+
+test('deferred hashing rejects an external same-size edit even when mtime is restored', async t => {
+  const {c,cwd,e}=await fixture(t);
+  await fs.writeFile(path.join(cwd,'late-change.cjs'),"require('node:fs').writeFileSync('same-size.md','producer');setTimeout(()=>{},800);");
+  const target=path.join(cwd,'same-size.md');
+  const execution=await execute(c,e,`${invoke(process.execPath)} late-change.cjs`,async()=>{
+    const deadline=Date.now()+5000;
+    while(Date.now()<deadline && !await fs.access(target).then(()=>true,()=>false))await new Promise(resolve=>setTimeout(resolve,20));
+    const stat=await fs.stat(target);
+    await new Promise(resolve=>setTimeout(resolve,80));
+    await fs.writeFile(target,'external');
+    await fs.utimes(target,stat.atime,stat.mtime);
+  });
+  assert.equal(execution.result.exitCode,undefined,execution.result.stderr);
+  const result=await execution.finish();
+  assert.equal(result.status,'needs_attention');
+  assert.equal(result.files[0].error,'SOURCE_CHANGED_AFTER_TRACE');
+  assert.equal((await jobs(c)).length,0);
+});
+
+test('Python rejects external writes with exactly restored nanosecond timestamps', async t => {
+  const {c,cwd,e}=await fixture(t);
+  await fs.writeFile(path.join(cwd,'ctime.py'),"import time\nwith open('ctime.md','w') as f:\n    f.write('producer')\ntime.sleep(1.5)\n");
+  const target=path.join(cwd,'ctime.md');
+  const execution=await execute(c,e,`${invoke(python)} ctime.py`,async()=>{
+    const deadline=Date.now()+5000;
+    while(Date.now()<deadline && !await fs.access(target).then(()=>true,()=>false))await new Promise(resolve=>setTimeout(resolve,20));
+    await new Promise(resolve=>setTimeout(resolve,80));
+    await run(python,['-c',"import os,time\np='ctime.md'\ns=os.stat(p)\nwith open(p,'w') as f:\n    f.write('external')\nos.utime(p,ns=(s.st_atime_ns,s.st_mtime_ns))"],{cwd,windowsHide:true});
+  });
+  assert.equal(execution.result.exitCode,undefined,execution.result.stderr);
+  const result=await execution.finish();
+  assert.equal(result.status,'needs_attention');
+  assert.equal(result.files[0].error,'SOURCE_CHANGED_AFTER_TRACE');
+  assert.equal((await jobs(c)).length,0);
+});

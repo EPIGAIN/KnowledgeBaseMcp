@@ -6,7 +6,7 @@ Archive newly handled work files and useful problem-solving notes to a NAS or ex
 
 The program runs on the employee's computer. After installation, the Agent asks for the employee's name and creates an employee folder in each destination. The background worker follows subsequent edits to registered files without scanning or backfilling historical files.
 
-> The Windows installer and scheduled worker have been tested. The macOS installer and LaunchAgent adapter are implemented, but have not yet been validated on a real Mac or a real Mac SMB mount. See the [verification record](docs/verification.md) and [Mac validation guide](docs/macos.md), both currently in Chinese.
+> The Windows installer and scheduled worker have been tested. The macOS installer and LaunchAgent have passed native tests using local simulation directories; real SMB uploads still need validation. The terminal-tracing changes in this revision have not yet been regression-tested on Mac. See the [verification record](docs/verification.md) and [Mac validation guide](docs/macos.md), both currently in Chinese.
 
 ## Prerequisites
 
@@ -115,6 +115,7 @@ MCP, Hooks, terminal observers, and the background worker share one work switch.
 - Merely placing a file in a work directory does not register it. An existing file can be registered when explicitly handled after activation; avoiding history scans does not mean rejecting all older files.
 - Edits made while paused, offline, or while the worker is stopped are not backfilled. On recovery, the worker establishes a current baseline. Immutable snapshots captured before the pause can still be retried. To archive edits made during a pause, have the Agent explicitly handle the file again after recovery.
 - The worker can follow manual edits to registered files after the Agent exits. Windows tasks have logon, periodic, and daily triggers; Mac LaunchAgents start at login and restart after unexpected exits. No processing runs during logout, sleep, or shutdown.
+- Routine successful archives stay quiet. Hooks add guidance at session start, during onboarding, or when work state changes. Outside-work Hooks add no archiving guidance, and the Agent is not instructed to change its file tools for collection.
 
 Ask the Agent to use `kb_profile` and `kb_status` for status, or `kb_work_switch` to pause or resume. These commands also work from the repository root on either platform:
 
@@ -141,6 +142,9 @@ These commands remove only this installation's background task. MCP/Hook configu
 
 ## Limitations
 
+- Archiving reads source files and stores copies, but installation updates client settings, terminal observers create `.kb-terminal` inside work directories, and internal state consumes local disk space. Terminal commands still load tracing code, which adds overhead; compatibility with every third-party program cannot be guaranteed.
+- Python tracing returns native file objects instead of proxy objects and does not force user streams to flush or close. It observes supported buffered writes and `os.open/write/close`; custom streams, `open(..., buffering=0)`, and unfinished output are not guaranteed to be captured.
+- Node/Python consolidate repeated checks of each file, normally reading its initial contents and final contents at exit. Device, file identity, size, and high-resolution timestamps are checked before and after the final hash. Intervening writes or incomplete evidence cause a skip rather than attributing unknown exit-time contents to the command. This is not kernel-level file activity auditing.
 - Terminal capture supports common Node `fs` writes, Python `open`/`pathlib`, and common Windows PowerShell file cmdlets. Mac Bash/Zsh commands reuse the Node/Python observers. Plain shell redirection, native extensions, direct .NET writes, preload bypasses, and detached background programs are not guaranteed to be captured. There is no directory-scan fallback to guess outputs.
 - Network disconnects are detected through health checks, not instantaneously. Mac `/Volumes` destinations are also checked for a mounted filesystem so a leftover empty directory is not treated as an online share. Remounted paths must match the configuration.
 - Work boundaries are path-based; the program cannot distinguish personal content from work content. Keep personal files outside the allowlist. Employee folders do not replace NAS account permissions.

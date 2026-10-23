@@ -12,6 +12,9 @@ const logFile = path.join(path.dirname(process.env.KB_TRACE_CONFIG), `${runtime}
 const excluded = new RegExp(config.excludedPattern || '^$', 'i');
 const changed = new Map(); const descriptors = new Map();
 let guard = false; let operationDepth = 0;
+let hashReads = 0; let hashedBytes = 0;
+const signature = stat => [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+function fileMark(file) { return signature(original.statSync(file, { bigint: true })); }
 let paused = false;
 function traceAllowed() {
   if (paused) return false;
@@ -37,14 +40,17 @@ function eligible(value) {
     return file;
   } catch { return null; }
 }
-function fingerprint(file) {
+function fingerprint(file, expected) {
   if (!traceAllowed()) return null;
   const prior = guard; guard = true;
   try {
-    const stat = original.statSync(file);
+    const stat = original.statSync(file, { bigint: true });
     if (!stat.isFile()) return null;
-    if (stat.size > config.maxBytes) return { sha256: 'oversize', size: stat.size };
-    return { sha256: crypto.createHash('sha256').update(original.readFileSync(file)).digest('hex'), size: stat.size };
+    if (expected && signature(stat) !== expected) return null;
+    if (stat.size > BigInt(config.maxBytes)) return { sha256: 'oversize', size: Number(stat.size) };
+    const bytes = original.readFileSync(file); hashReads++; hashedBytes += bytes.length;
+    if (fileMark(file) !== signature(stat)) return null;
+    return { sha256: crypto.createHash('sha256').update(bytes).digest('hex'), size: Number(stat.size) };
   } catch { return null; }
   finally { guard = prior; }
 }
@@ -52,14 +58,24 @@ function emit(data) {
   if (data.kind === 'write' && !traceAllowed()) return;
   try { original.appendFileSync(logFile, JSON.stringify({ runtime, pid: process.pid, time: Date.now(), ...data }) + '\n'); } catch { /* Never change the user's program outcome. */ }
 }
-function before(value) { const file = !guard && !operationDepth && eligible(value); return file ? { file, before: fingerprint(file) } : null; }
+function before(value) {
+  try {
+    const file = !guard && !operationDepth && eligible(value);
+    if (!file) return null;
+    const previous = changed.get(file);
+    // Keep the first baseline; do not hash a growing file before every append.
+    return { file, before: previous ? previous.before : fingerprint(file) };
+  } catch { return null; }
+}
 function mark(item) {
   if (!item) return;
-  const previous = changed.get(item.file);
-  // Snapshot at the successful write, never adopt somebody else's later
-  // modification merely because our process stayed alive for a while.
-  const proof = fingerprint(item.file);
-  changed.set(item.file, { ...item, before: previous ? previous.before : item.before, after: proof ? { ...proof, time: Date.now() } : null });
+  try {
+    if (!traceAllowed()) return;
+    const previous = changed.get(item.file);
+    // Capture metadata at the successful operation. At exit we may hash only
+    // this exact version; an intervening writer invalidates the observation.
+    changed.set(item.file, { ...item, before: previous ? previous.before : item.before, expected: fileMark(item.file), time: Date.now() });
+  } catch { /* Observation failures must not change the program's result. */ }
 }
 function sync(name, argument) {
   const fn = fs[name];
@@ -118,8 +134,9 @@ emit({ kind: 'start', language: 'node' });
 process.once('exit', code => {
   guard = true;
   for (const item of changed.values()) {
-    const after = item.after;
-    if (after && after.sha256 !== 'oversize') emit({ kind: 'write', time: after.time, path: item.file, before: item.before?.sha256 ?? null, sha256: after.sha256, size: after.size });
+    const after = fingerprint(item.file, item.expected);
+    if (after && after.sha256 !== 'oversize') emit({ kind: 'write', time: item.time, path: item.file, before: item.before?.sha256 ?? null, sha256: after.sha256, size: after.size });
+    else if (!after && traceAllowed()) emit({ kind: 'conflict', time: item.time, path: item.file });
   }
-  emit({ kind: 'end', exitCode: code });
+  emit({ kind: 'end', exitCode: code, hashReads, hashedBytes });
 });

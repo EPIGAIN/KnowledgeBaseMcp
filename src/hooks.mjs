@@ -3,12 +3,24 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { archiveFile, archiveKnowledge, atomicJson, exists, flush, getProfile, inside, jobs, readJson, sha, sourceInfo } from './storage.mjs';
 import { prepareTerminal, finishTerminal, collectTerminal } from './terminal.mjs';
-import { archiveGuidance, nameQuestion, profileGuidance } from './onboarding.mjs';
+import { nameQuestion, profileGuidance } from './onboarding.mjs';
 import { evaluateGate, gateMessage } from './gate.mjs';
 
 const sessionKey = e => sha(`${e.client || 'claude'}:${e.session_id || 'unknown'}`).slice(0, 32);
 const sessionFile = (c, e) => path.join(c.stateDir, 'sessions', `${sessionKey(e)}.json`);
-const intro = p => profileGuidance(p) + (p ? ' ' + archiveGuidance : '');
+const readyGuidance = p => `知识归档已启用，员工：${p.name}。只归档工作范围内新经手的文件，不扫历史。正常处理任务即可，无需为归档改变工具或写法；归档结果可用 kb_status 查询。`;
+
+async function guidanceFor(c, e, gate, profile) {
+  if (!['SessionStart', 'UserPromptSubmit'].includes(e.hook_event_name) || gate.status === 'outside_work') return {};
+  const file = path.join(c.stateDir, 'notices', `${sessionKey(e)}.json`);
+  const signature = JSON.stringify([c.enabledAt, gate.status, gate.epoch, profile?.id]);
+  const previous = await readJson(file, null);
+  // Keep onboarding explicit, but do not repeat ready/offline instructions each turn.
+  if (e.hook_event_name !== 'SessionStart' && (profile || !gate.active) && previous?.signature === signature) return {};
+  await atomicJson(file, { signature });
+  const context = !gate.active ? gateMessage(gate) : profile ? readyGuidance(profile) : profileGuidance(null);
+  return { ...(!profile && gate.active && e.hook_event_name === 'SessionStart' ? { systemMessage: nameQuestion } : {}), hookSpecificOutput: { hookEventName: e.hook_event_name, additionalContext: context } };
+}
 
 async function logEvent(c, data) {
   await atomicJson(path.join(c.stateDir, 'events', `${Date.now()}-${randomUUID()}.json`), data);
@@ -45,16 +57,14 @@ export async function handleHook(c, e) {
   if (!e.cwd || !path.isAbsolute(e.cwd)) return {};
   c = { ...c, activeRoot: path.resolve(e.cwd) };
   const gate = await evaluateGate(c, { cwd: c.activeRoot, onboarding: true });
-  if (!gate.active) return ['SessionStart', 'UserPromptSubmit'].includes(e.hook_event_name)
-    ? { hookSpecificOutput: { hookEventName: e.hook_event_name, additionalContext: gateMessage(gate) } } : {};
+  if (!gate.active) return guidanceFor(c, e, gate, null);
   const profile = await getProfile(c);
   const event = e.hook_event_name;
-  const guidance = intro(profile) + (c.scope === 'user' ? ' 当前为用户级全局采集：只归档启用后新经手的文件与本轮知识，不扫描或补传历史。' : '') + (c.terminalCapture?.enabled ? ' 终端已启用按命令写入追踪。输出文件优先使用 Python open/pathlib、Node fs.writeFile、PowerShell Set-Content/Out-File/Export-Csv 等支持接口，产物会自动归档，无需再调用上传工具。不能根据目录差异补传未触及文件。' : ' 终端未启用写入追踪时，只对明确的本轮产物调用 kb_upload_file。');
-  if (event === 'SessionStart') return { ...(!profile ? { systemMessage: nameQuestion } : {}), hookSpecificOutput: { hookEventName: event, additionalContext: guidance } };
+  if (event === 'SessionStart') return guidanceFor(c, e, gate, profile);
   if (event === 'UserPromptSubmit') {
     const current = { prompt: profile ? String(e.prompt || '').slice(0, 50000) : '', time: new Date().toISOString(), turnId: e.turn_id || randomUUID(), activation: c.enabledAt, epoch: gate.epoch };
     await atomicJson(sessionFile(c, e), current);
-    return { hookSpecificOutput: { hookEventName: event, additionalContext: guidance } };
+    return guidanceFor(c, e, gate, profile);
   }
   if (!profile) return {};
   const turn = await readJson(sessionFile(c, e), { turnId: sessionKey(e), prompt: '', baseline: { files: {} } });
@@ -64,10 +74,9 @@ export async function handleHook(c, e) {
   if (c.terminalCapture?.enabled && ['PostToolUse', 'PostToolUseFailure'].includes(event)) {
     const traced = await finishTerminal(c, e);
     if (traced) {
-      await flush(c);
-      const count = (traced.files || []).filter(f => f.jobId).length;
-      const message = traced.status === 'captured' ? `终端写入追踪已自动登记 ${count} 个明确产物，可用 kb_status 查看最终上传状态。不要重复手动上传。` : `本次终端追踪状态：${traced.status}。未发现写入证据时不会扫描目录或猜测产物。`;
-      return event === 'PostToolUse' ? { hookSpecificOutput: { hookEventName: event, additionalContext: message } } : {};
+      const stored = await flush(c);
+      const needsAttention = traced.status === 'needs_attention' || traced.status === 'failed' && traced.observedWrites > 0 || stored.some(j => j.status !== 'stored');
+      return needsAttention && event === 'PostToolUse' ? { hookSpecificOutput: { hookEventName: event, additionalContext: '本次归档有未完成或无法确认的产物，可用 kb_status 查看；无需改变原任务的实现方式。' } } : {};
     }
   }
   if (event === 'PostToolUse') {
@@ -90,14 +99,14 @@ export async function handleHook(c, e) {
       for (const match of String(e.tool_input?.command || e.tool_input?.input || '').matchAll(/^\*\*\* (?:Add|Update) File: (.+)$/gm)) candidates.push(match[1].trim());
     }
     if (c.scope === 'user' && /^(Bash|exec_command)$/.test(tool)) {
-      return { hookSpecificOutput: { hookEventName: event, additionalContext: '全局归档不会扫描目录。若本次终端操作生成或修改了工作文件，请仅对明确的本轮产物调用 kb_upload_file；未处理文件则无需操作，不能补传未触及的历史文件。' } };
+      return {};
     }
     const results = await capture(c, e, candidates);
     if (results.length) {
       await logEvent(c, { event, client: e.client || 'claude', session: sessionKey(e), tool, results });
       const stored = await flush(c);
       const unresolved = results.filter(r => r.status === 'needs_attention').length + stored.filter(j => j.status !== 'stored').length;
-      return { hookSpecificOutput: { hookEventName: event, additionalContext: unresolved ? `知识归档存在 ${unresolved} 项待处理。可调用 kb_status 查看，不能报告全部上传成功。` : `知识归档已处理 ${results.length} 个文件候选，可用 kb_status 查询保存路径。` } };
+      return unresolved ? { hookSpecificOutput: { hookEventName: event, additionalContext: `知识归档存在 ${unresolved} 项待处理。可调用 kb_status 查看，不能报告全部上传成功。` } } : {};
     }
     return {};
   }
