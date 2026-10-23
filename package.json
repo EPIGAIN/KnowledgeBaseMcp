@@ -14,6 +14,7 @@
     "check:release": "node scripts/check-release.mjs",
     "test:installation": "node scripts/test-installation.mjs",
     "test:macos": "node scripts/test-macos-installation.mjs",
+    "test:doubao": "node --test test/doubao.test.mjs",
     "start": "node bin/kb.mjs serve"
   },
   "dependencies": {

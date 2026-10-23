@@ -23,7 +23,7 @@ try {
       process.exit(0);
     }
     const config = await loadConfig(values.config);
-    if (command === 'serve') { const { serve } = await import('../src/server.mjs'); await serve(config); }
+    if (command === 'serve') { const { serve } = await import('../src/server.mjs'); await serve(config, { client: values.client || 'standard' }); }
     else if (command === 'hook') {
       let input = ''; for await (const chunk of process.stdin) { input += chunk; if (input.length > 4 * 1024 * 1024) throw new Error('Hook 输入过大。'); }
       const { handleHook } = await import('../src/hooks.mjs');

@@ -12,6 +12,7 @@ import { migrationFile, migrationActive, freezeOperations } from './operations.m
 import { probeTargets } from './gate.mjs';
 import { installUser } from './install-user.mjs';
 import { isNodeCommand } from './runtime-command.mjs';
+import { doubaoRegistrationPath } from './desktop-registration.mjs';
 
 const samePath = (a, b) => Boolean(a && b && path.relative(a, b) === '');
 const rootFor = (c, bucket) => bucket === 'md' ? c.mdRoot : c.filesRoot;
@@ -42,11 +43,13 @@ async function locateAnchor(options, locations) {
     candidates.push(path.resolve(spec.args[i + 1]));
   };
   add(claude.mcpServers?.['company-knowledge']);
+  const desktop = await readJson(doubaoRegistrationPath(locations?.home), {});
+  add(desktop.mcpServers?.['company-knowledge']);
   const codexDir = locations?.codexDir || (locations ? path.join(home, '.codex') : process.env.CODEX_HOME || path.join(home, '.codex'));
   const text = await fs.readFile(path.join(codexDir, 'config.toml'), 'utf8').catch(e => { if (e.code === 'ENOENT') return ''; throw e; });
   const block = text.match(/# BEGIN company-knowledge \(managed by knowledge-mcp\)([\s\S]*?)# END company-knowledge \(managed by knowledge-mcp\)/)?.[1];
   if (block) add({ command: JSON.parse(block.match(/^command = (.+)$/m)?.[1] || 'null'), args: JSON.parse(block.match(/^args = (.+)$/m)?.[1] || 'null') });
-  if (candidates.some(p => !samePath(p, candidates[0]))) throw fail('CONFIG_CONFLICT', '两个客户端的员工配置不同，不能自动合并。');
+  if (candidates.some(p => !samePath(p, candidates[0]))) throw fail('CONFIG_CONFLICT', '各客户端的员工配置不同，不能自动合并。');
   if (options.config) {
     if (!path.isAbsolute(options.config) || candidates.some(p => !samePath(p, options.config))) throw fail('CONFIG_CONFLICT', '指定入口与现有注册不一致。');
     return path.resolve(options.config);

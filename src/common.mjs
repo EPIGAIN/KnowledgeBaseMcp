@@ -34,10 +34,17 @@ export async function safePath(root, relative = '', createParents = false) {
 export async function withStateLock(c, name, fn) {
   await fs.mkdir(c.stateDir, { recursive: true });
   const file = path.join(c.stateDir, `${name}.lock`);
+  let transientFailures = 0;
   for (let attempt = 0; attempt < 200; attempt++) {
     let handle;
     try { handle = await fs.open(file, 'wx'); }
     catch (error) {
+      // On Windows an exclusively created lock can briefly be delete-pending
+      // after its owner releases it. Retry briefly; persistent ACL failures
+      // still surface unchanged, and no operation runs without acquiring it.
+      if (process.platform === 'win32' && ['EPERM', 'EACCES', 'EBUSY'].includes(error.code) && transientFailures++ < 8) {
+        await new Promise(resolve => setTimeout(resolve, 25)); continue;
+      }
       if (error.code !== 'EEXIST') throw error;
       const pid = Number(await fs.readFile(file, 'utf8').catch(() => '0'));
       if (pid) {

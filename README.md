@@ -2,7 +2,7 @@
 
 **简体中文** | [English](README.en.md)
 
-将员工新经手的工作文件和有价值的问题解决记录归档到 NAS 或指定的本地目录。Claude Code 与 Codex 在同一台电脑上共用员工身份、工作目录白名单、上传队列和去重记录。
+将员工新经手的工作文件和有价值的问题解决记录归档到 NAS 或指定的本地目录。Claude Code、Codex 和豆包桌面 STDIO 接入共用同一台电脑上的员工身份、工作目录白名单、上传队列和去重记录。
 
 程序运行在员工电脑。安装后由 Agent 主动询问姓名，在 Markdown 目标和其他文件目标中建立员工专属目录；后台只跟进已登记文件的后续修改，不扫描或补传历史文件。
 
@@ -25,6 +25,8 @@ cd <repository-directory>
 - **macOS**：先在 Finder 中连接、认证并挂载 NAS，再填写挂载卷下的绝对路径，通常位于 `/Volumes` 下。不要填写 Windows UNC 路径或 `smb://` URL。程序不会自动挂载 NAS 或保存其密码。
 
 公开仓库只提供占位模板。真实路径、填写好的配置和单独分发给员工的安装命令保留在本地，不提交到 GitHub。
+
+仅使用豆包桌面版时，需要提供 STDIO 自定义连接器入口的客户端，无需安装 Claude Code / Codex。见下方豆包接入步骤；豆包的文件与对话采集范围不同于 CLI Hook。
 
 ## 1. 准备一份 MD 配置
 
@@ -83,11 +85,31 @@ bash ./scripts/install-macos.sh --config-file ./company-knowledge.local.md --cli
 | 隔离测试用客户端目录 | `-ClientHome "<测试用户目录>"` | `--client-home "<测试用户目录>"` |
 | 跳过后台注册，仅供测试 | `-SkipTask` | `--skip-service` |
 
-客户端可选 `auto`、`claude`、`codex`、`both`。`auto` 配置当前终端检测到的客户端。Mac 使用隔离客户端目录时必须同时指定 `--skip-service`。
+客户端可选 `auto`、`claude`、`codex`、`both`、`doubao`、`all`。`auto` 只检测 Claude Code / Codex；`both` 保持两端原行为，`all` 再生成豆包接入文件。Mac 使用隔离客户端目录时必须同时指定 `--skip-service`。
 
 状态默认位于当前用户的系统应用数据目录：Windows 为 `%LOCALAPPDATA%\CompanyKnowledgeMcp`，Mac 为 `~/Library/Application Support/CompanyKnowledgeMcp`。它保存员工身份、不可变快照、队列、去重记录和配置备份，不需要人工编辑。可选状态目录必须位于本机，不能放在共享盘或 Mac 的 `/Volumes` 下；以后省略参数会沿用已有位置。
 
 首次目标离线时仍可安装，但归档保持暂停。安装输出会显示日常维护的 MD 文件、固定配置入口和程序管理的状态目录。
+
+### 豆包桌面版（STDIO）
+
+Windows：
+
+```powershell
+powershell.exe -NoProfile -File .\scripts\Install-OneClick.ps1 -ConfigFile .\company-knowledge.local.md -Clients doubao
+```
+
+macOS：
+
+```bash
+bash ./scripts/install-macos.sh --config-file ./company-knowledge.local.md --clients doubao
+```
+
+安装器准备共享状态和后台监听，生成本地 `doubao-stdio.json`，并打印 Node 命令与参数。将这些字段填写到豆包“自定义连接器 → STDIO”，按客户端正常流程启用；安装器不改豆包内部设置。
+
+豆包工作任务先调用 `kb_begin_work` 选定白名单内目录，再携带返回的 `work_session` 读写资料、登记姓名。数据工具会检查本次范围；不从桌面进程启动目录推断工作项目。结束时调用 `kb_end_work`，需要暂停所有后台归档时用 `kb_work_switch`。
+
+**已实现服务端接入并通过协议测试，豆包客户端实测仍待完成。** 没有伪造豆包 Hook：只有通过本 MCP 读取/上传登记的文件才进入后台跟进，不能承诺采集豆包自身经手的全部文件或聊天记录。详见 [豆包接入说明](docs/doubao.md)。下面的“从 WorkRoot 打开会话／信任 Hook”步骤适用于 Claude Code 和 Codex。
 
 ## 3. 首次使用
 

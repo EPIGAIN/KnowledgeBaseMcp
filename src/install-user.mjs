@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { mergeHooks } from './install.mjs';
 import { atomicJson, exists, loadConfig, validateConfig, inside } from './storage.mjs';
 import { hookCommand, isNodeCommand } from './runtime-command.mjs';
+import { doubaoRegistration, doubaoRegistrationPath } from './desktop-registration.mjs';
 const begin = '# BEGIN company-knowledge (managed by knowledge-mcp)';
 const end = '# END company-knowledge (managed by knowledge-mcp)';
 function block(text) {
@@ -24,12 +25,15 @@ export async function installUser(options, locations) {
     return installFromMarkdown(options, locations);
   }
   const client = options.client || 'both';
-  if (!['claude', 'codex', 'both'].includes(client)) throw new Error('--client 必须是 claude、codex 或 both。');
+  if (!['claude', 'codex', 'both', 'doubao', 'all'].includes(client)) throw new Error('--client 必须是 claude、codex、both、doubao 或 all。');
+  const wantsClaude = ['claude', 'both', 'all'].includes(client);
+  const wantsCodex = ['codex', 'both', 'all'].includes(client);
+  const wantsDoubao = ['doubao', 'all'].includes(client);
   if (options['client-home']) locations = { home: absolute(options['client-home'], '--client-home') };
-  if (process.env.CLAUDE_CONFIG_DIR && !locations) throw new Error('自定义 CLAUDE_CONFIG_DIR 请通过明确的客户端配置位置安装。');
+  if (wantsClaude && process.env.CLAUDE_CONFIG_DIR && !locations) throw new Error('自定义 CLAUDE_CONFIG_DIR 请通过明确的客户端配置位置安装。');
   const configPath = options.config ? absolute(options.config, '--config') : path.join(absolute(options.state, '--state'), 'config.json');
   const bin = fileURLToPath(new URL('../bin/kb.mjs', import.meta.url));
-  const base = hookCommand(bin, configPath);
+  const base = wantsClaude || wantsCodex ? hookCommand(bin, configPath) : null;
   const old = options._candidateConfig || (await exists(configPath) ? await loadConfig(configPath) : null);
   if (options.config && !old) throw new Error('--config 必须指向已有配置。');
   if (old?.sourceMd && ['state', 'md-root', 'files-root', 'work-root', 'workspace'].some(key => options[key] !== undefined)) throw new Error('此安装由 MD 管理，请修改配置 MD 并使用 --config-md 应用迁移。');
@@ -44,12 +48,13 @@ export async function installUser(options, locations) {
   const repoRoot = path.dirname(path.dirname(bin));
   if (inside(repoRoot, config.stateDir) && !['.kb-local', '.local-private', '.test-output'].some(name => inside(path.join(repoRoot, name), config.stateDir))) throw new Error('仓库内的状态目录必须位于已忽略的私有目录；建议放到仓库之外。');
   const changedScope = old && JSON.stringify(old.workRoots) !== JSON.stringify(workRoots);
-  config = validateConfig({ ...config, version: config.sourceMd ? 3 : 2, workRoots, scope: 'user', captureMode: 'new-events-only', enabledAt: !changedScope && old?.enabledAt || new Date().toISOString(), terminalCapture: { enabled: true, version: 2 }, pollMs: 2000, settleMs: 2000 });
+  config = validateConfig({ ...config, version: config.sourceMd ? 3 : 2, workRoots, scope: 'user', captureMode: 'new-events-only', enabledAt: !changedScope && old?.enabledAt || new Date().toISOString(), terminalCapture: { enabled: true, version: 2 }, pollMs: 2000, settleMs: 2000,
+    ...(wantsDoubao ? { privateRoots: [...new Set([...(config.privateRoots || []), path.dirname(doubaoRegistrationPath(locations?.home))])] } : {}) });
   const home = locations?.home || os.homedir();
   const claudeDir = locations?.claudeDir || path.join(home, '.claude');
   const claudeState = locations?.claudeState || path.join(home, '.claude.json');
   const codexDir = locations?.codexDir || (locations ? path.join(home, '.codex') : process.env.CODEX_HOME || path.join(home, '.codex'));
-  const globalPaths = { claudeMcp: claudeState, claudeHooks: path.join(claudeDir, 'settings.json'), codexMcp: path.join(codexDir, 'config.toml'), codexHooks: path.join(codexDir, 'hooks.json') };
+  const globalPaths = { claudeMcp: claudeState, claudeHooks: path.join(claudeDir, 'settings.json'), codexMcp: path.join(codexDir, 'config.toml'), codexHooks: path.join(codexDir, 'hooks.json'), doubaoMcp: doubaoRegistrationPath(locations?.home) };
   const spec = { command: process.execPath, args: [bin, 'serve', '--config', configPath] };
   const read = file => fs.readFile(file, 'utf8').catch(e => { if (e.code === 'ENOENT') return null; throw e; });
   const same = value => isNodeCommand(value?.command) && JSON.stringify(value.args) === JSON.stringify(spec.args);
@@ -65,25 +70,34 @@ export async function installUser(options, locations) {
     if (!same({ args, command })) throw new Error('Codex 已指向另一份员工配置，拒绝创建两套身份。');
     previousNodes.add(command);
   }
-  const bases = [...previousNodes].map(node => hookCommand(bin, configPath, { node }));
+  const desktopSpec = doubaoRegistration(configPath);
+  const previousDesktop = json(await read(globalPaths.doubaoMcp));
+  if (previousDesktop.mcpServers?.['company-knowledge']) {
+    const previous = previousDesktop.mcpServers['company-knowledge'];
+    if (!isNodeCommand(previous.command) || JSON.stringify(previous.args) !== JSON.stringify(desktopSpec.mcpServers['company-knowledge'].args)) throw new Error('豆包接入文件指向另一份员工配置，拒绝创建两套身份。');
+  }
+  const bases = base ? [...previousNodes].map(node => hookCommand(bin, configPath, { node })) : [];
   // Retire the previous bare-node registration as well; compare exact commands only.
   if (![bin, configPath].some(p => p.includes("'"))) bases.push(`node '${bin.replaceAll('\\', '/')}' hook --config '${configPath.replaceAll('\\', '/')}'`);
   const ownedHooks = [...new Set(bases.flatMap(b => [b, `${b} --client claude`, `${b} --client codex`]))];
   const mutations = [];
   const plan = async (file, transform) => { const original = await read(file); const next = transform(original); if (next !== original) mutations.push({ file, original, next }); };
-  if (client === 'claude' || client === 'both') {
+  if (wantsClaude) {
     await plan(globalPaths.claudeMcp, text => { const d = json(text); d.mcpServers = { ...d.mcpServers, 'company-knowledge': { type: 'stdio', ...spec } }; return serialize(d); });
     await plan(globalPaths.claudeHooks, text => serialize(mergeHooks(json(text), `${base} --client claude`, ownedHooks)));
   }
-  if (client === 'codex' || client === 'both') {
+  if (wantsCodex) {
     await plan(globalPaths.codexMcp, () => codex.rest.trimEnd() + '\n\n' + [begin, '[mcp_servers.company-knowledge]', `command = ${JSON.stringify(spec.command)}`, `args = ${JSON.stringify(spec.args)}`, 'startup_timeout_sec = 30', 'tool_timeout_sec = 120', end].join('\n') + '\n');
     await plan(globalPaths.codexHooks, text => serialize(mergeHooks(json(text), `${base} --client codex`, ownedHooks)));
   }
+  if (wantsDoubao) await plan(globalPaths.doubaoMcp, text => {
+    const d = json(text); d.mcpServers = { ...d.mcpServers, ...desktopSpec.mcpServers }; return serialize(d);
+  });
   // Remove only this registration's old project entries; never create them.
-  for (const workspace of workRoots) {
+  for (const workspace of wantsClaude || wantsCodex ? workRoots : []) {
     const mcpPath = path.join(workspace, '.mcp.json');
-    if (await exists(mcpPath)) await plan(mcpPath, text => { const d = json(text); if (same(d.mcpServers?.['company-knowledge'])) delete d.mcpServers['company-knowledge']; return serialize(d); });
-    for (const file of ['.claude/settings.local.json', '.codex/hooks.json']) {
+    if (wantsClaude && await exists(mcpPath)) await plan(mcpPath, text => { const d = json(text); if (same(d.mcpServers?.['company-knowledge'])) delete d.mcpServers['company-knowledge']; return serialize(d); });
+    for (const file of [...(wantsClaude ? ['.claude/settings.local.json'] : []), ...(wantsCodex ? ['.codex/hooks.json'] : [])]) {
       const target = path.join(workspace, file);
       if (await exists(target)) await plan(target, text => {
         const d = json(text);
@@ -96,7 +110,7 @@ export async function installUser(options, locations) {
       });
     }
     const target = path.join(workspace, '.codex/config.toml');
-    if (await exists(target)) await plan(target, text => { const parsed = block(text || ''); return parsed.managed.includes(JSON.stringify(configPath)) ? parsed.rest.trimEnd() + '\n' : text; });
+    if (wantsCodex && await exists(target)) await plan(target, text => { const parsed = block(text || ''); return parsed.managed.includes(JSON.stringify(configPath)) ? parsed.rest.trimEnd() + '\n' : text; });
   }
   if (options._planOnly) return { configPath, config, globalPaths, changedFiles: mutations.map(m => m.file) };
   const backups = []; const applied = [];
@@ -120,7 +134,9 @@ export async function installUser(options, locations) {
     }
     throw error;
   }
-  const result = { client, scope: 'user', configPath, sharedState: config.stateDir, workRoots, globalPaths, enabledAt: config.enabledAt, changedFiles: mutations.map(m => m.file), backups, next: '重启客户端并信任 Hook；从配置的工作目录打开新会话。目标可访问后 Agent 主动询问姓名。' };
+  const result = { client, scope: 'user', configPath, sharedState: config.stateDir, workRoots, globalPaths, enabledAt: config.enabledAt, changedFiles: mutations.map(m => m.file), backups,
+    ...(wantsDoubao ? { doubao: { registrationFile: globalPaths.doubaoMcp, transport: 'stdio', ...desktopSpec.mcpServers['company-knowledge'], clientConfigurationApplied: false, clientHooks: false } } : {}),
+    next: wantsDoubao ? '豆包 STDIO 接入文件已生成，请将 command 和 args 填入豆包自定义连接器；尚未修改豆包内部设置。工作请求先 kb_begin_work，再按提示询问姓名。其他客户端需重启并信任 Hook。' : '重启客户端并信任 Hook；从配置的工作目录打开新会话。目标可访问后 Agent 主动询问姓名。' };
   await atomicJson(path.join(config.stateDir, 'global-installation.json'), result);
   return result;
 }

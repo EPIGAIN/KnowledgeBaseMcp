@@ -77,6 +77,7 @@ export async function assertGate(c, options = {}) {
 }
 
 export function gateMessage(gate) {
+  if (gate.status === 'work_context_required') return '豆包工作范围尚未选定。仅在用户明确要求处理工作资料时调用 kb_begin_work，后续数据操作传入该对话的 work_session。不会根据客户端启动目录或其他对话自动开启采集。';
   if (['config_pending', 'config_invalid'].includes(gate.status)) return '工作归档暂停：配置 MD 已改变、无法读取或不合法。请修正后重新执行同一条安装命令，校验并应用迁移；不会继续向旧位置上传。';
   if (gate.status === 'migrating') return '工作归档暂停：正在应用配置迁移，或迁移尚未完成。请等待完成；失败时修正原因后重跑同一条安装命令。';
   return `工作归档暂停（${gate.status}）：不读取工作文件、不采集对话、不监听、不上传。仅当两个目标可访问、工作开关开启且会话位于配置的工作目录时恢复。`;

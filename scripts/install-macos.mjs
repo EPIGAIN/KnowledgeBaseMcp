@@ -11,7 +11,7 @@ try {
     'client-home': { type: 'string' }, 'skip-service': { type: 'boolean', default: false }, help: { type: 'boolean', default: false }
   } });
   if (args.help) {
-    console.log('bash scripts/install-macos.sh --config-file "<配置MD路径>" [--state-dir "<本机状态目录>"] [--clients auto|claude|codex|both]\n隔离测试：--client-home "<测试用户目录>" --skip-service');
+    console.log('bash scripts/install-macos.sh --config-file "<配置MD路径>" [--state-dir "<本机状态目录>"] [--clients auto|claude|codex|both|doubao|all]\n隔离测试：--client-home "<测试用户目录>" --skip-service');
   } else {
     if (process.platform !== 'darwin') throw new Error('此安装器适用于 macOS；Windows 请使用 Install-OneClick.ps1。');
     if (process.getuid() === 0) throw new Error('请以当前员工用户运行，不要使用 sudo。');
@@ -30,8 +30,9 @@ try {
     const clients = [];
     for (const name of ['claude', 'codex']) if (await available(name)) clients.push(name);
     const client = args.clients === 'auto' ? (clients.length === 2 ? 'both' : clients[0]) : args.clients;
-    if (!['claude', 'codex', 'both'].includes(client)) throw new Error('请先安装 Claude Code 或 Codex；--clients 可选 auto、claude、codex、both。');
-    if ((client === 'both' ? ['claude', 'codex'] : [client]).some(name => !clients.includes(name))) throw new Error('指定客户端未安装或不在 PATH 中。');
+    if (!['claude', 'codex', 'both', 'doubao', 'all'].includes(client)) throw new Error('未检测到客户端；--clients 可选 auto、claude、codex、both、doubao、all。');
+    const required = client === 'doubao' ? [] : ['both', 'all'].includes(client) ? ['claude', 'codex'] : [client];
+    if (required.some(name => !clients.includes(name))) throw new Error('指定命令行客户端未安装或不在 PATH 中。');
     console.log('[1/3] 检查依赖...');
     const checked = spawnSync(process.execPath, [path.join(root, 'scripts/check-dependencies.mjs')], { cwd: root, stdio: 'ignore' });
     if (checked.status !== 0) {
@@ -49,8 +50,16 @@ try {
     } else console.log('[3/3] 已按参数跳过后台服务。');
     const { atomicJson } = await import('../src/common.mjs');
     await atomicJson(path.join(installed.sharedState, 'installation.json'), { ...installed, service, installedAt: new Date().toISOString() });
-    console.log('配置完成。重启客户端，从已配置的工作目录打开新对话，按正常流程信任 Hook。');
-    console.log('两个目标可访问后，Agent 主动询问姓名；回答后才开始采集。');
+    if (installed.doubao) {
+      console.log('豆包接入准备完成。还需在豆包自定义连接器中填写 STDIO 参数，没有安装豆包 Hook。');
+      console.log('接入文件：' + installed.doubao.registrationFile);
+      console.log('命令：' + installed.doubao.command);
+      console.log('参数数组：' + JSON.stringify(installed.doubao.args));
+      console.log('工作任务先开始工作会话；目标可访问后由 Agent 询问姓名。其他客户端需重启并信任 Hook。');
+    } else {
+      console.log('配置完成。重启客户端，从已配置的工作目录打开新对话，按正常流程信任 Hook。');
+      console.log('两个目标可访问后，Agent 主动询问姓名；回答后才开始采集。');
+    }
     console.log('日常维护：' + configMd);
     console.log('配置入口：' + installed.configPath);
     console.log('自动管理状态：' + installed.stateRoot);

@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | **English**
 
-Archive newly handled work files and useful problem-solving notes to a NAS or explicitly configured local directories. Claude Code and Codex share one employee profile, work-directory allowlist, upload queue, and deduplication state on the same computer.
+Archive newly handled work files and useful problem-solving notes to a NAS or explicitly configured local directories. Claude Code, Codex, and the Doubao desktop STDIO integration share one employee profile, work-directory allowlist, upload queue, and deduplication state on the same computer.
 
 The program runs on the employee's computer. After installation, the Agent asks for the employee's name and creates an employee folder in each destination. The background worker follows subsequent edits to registered files without scanning or backfilling historical files.
 
@@ -25,6 +25,8 @@ Prepare two upload destinations that do not contain one another, and one or more
 - **macOS:** Connect, authenticate, and mount the NAS in Finder first. Configure absolute paths inside the mounted volume, typically under `/Volumes`. Do not use Windows UNC paths or `smb://` URLs. The program does not mount shares automatically or store NAS passwords.
 
 The public repository contains placeholders only. Keep real paths, completed configurations, and separately distributed employee installation commands local; do not commit them to GitHub.
+
+For Doubao-only use, a desktop version with a custom STDIO connector is required; Claude Code / Codex need not be installed. See the Doubao section below. Its collection capabilities differ from CLI Hooks.
 
 ## 1. Prepare one Markdown configuration
 
@@ -83,11 +85,35 @@ PowerShell is not required. Do not use `sudo`. The installer configures user-lev
 | Isolated client home for testing | `-ClientHome "<test-user-directory>"` | `--client-home "<test-user-directory>"` |
 | Skip background registration for testing | `-SkipTask` | `--skip-service` |
 
-Client options are `auto`, `claude`, `codex`, and `both`. Automatic detection configures clients found in the current terminal. On Mac, `--client-home` requires `--skip-service`.
+Client options are `auto`, `claude`, `codex`, `both`, `doubao`, and `all`. Automatic detection covers only Claude Code / Codex; `both` retains its original meaning and `all` additionally exports a Doubao registration. On Mac, `--client-home` requires `--skip-service`.
 
 State defaults to `%LOCALAPPDATA%\CompanyKnowledgeMcp` on Windows or `~/Library/Application Support/CompanyKnowledgeMcp` on Mac. It contains the employee profile, immutable snapshots, queue, deduplication records, and configuration backups. Do not edit these internal files. An overridden state directory must be local, not a network share or a Mac `/Volumes` mount. Later installs retain the chosen location if the parameter is omitted.
 
 The first installation can complete while destinations are offline, but archiving stays paused. Installer output identifies the Markdown settings file, stable configuration entry point, and managed state directory.
+
+### Doubao desktop (STDIO)
+
+Windows:
+
+```powershell
+powershell.exe -NoProfile -File .\scripts\Install-OneClick.ps1 -ConfigFile .\company-knowledge.local.md -Clients doubao
+```
+
+macOS:
+
+```bash
+bash ./scripts/install-macos.sh --config-file ./company-knowledge.local.md --clients doubao
+```
+
+The installer prepares shared state and the background worker, exports a private `doubao-stdio.json`, and prints the absolute Node command and argument array. Enter these fields in Doubao's custom STDIO connector and enable it through the normal client workflow. The installer does not edit Doubao's internal settings.
+
+For an explicit work request, call `kb_profile`, then `kb_begin_work` with an allowlisted work directory. Include the returned `work_session` in subsequent data calls and `kb_setup` after the employee answers the name question. No desktop launch directory is treated as the current project. Each token is restricted to the selected directory, remains in that MCP process only, expires after four hours, and is invalidated by configuration migration. End it with `kb_end_work`; use `kb_work_switch` to pause the shared background worker as well.
+
+The token makes tool scope explicit; it does not authenticate a Doubao chat or classify personal conversations. Enable the connector only for intended local work tasks and follow client permissions. Calls without a valid work context cannot read or upload files.
+
+**Server-side integration and stdio protocol tests are implemented; actual Doubao-client validation is pending.** Read/upload/search and knowledge-note tools are available, and previously registered files can be followed by the shared worker. No Doubao Hook is installed: arbitrary Doubao file operations, cloud attachments, and chat history are not automatically captured. Files need a local path inside WorkRoot and an explicit MCP read/upload first. Source files are not modified; no historical scan is added.
+
+After a Node upgrade, rerun installation and update the connector fields in Doubao. Keep the repository location fixed; moving it requires resolving the old registration's program-path conflict first. Keep the exported JSON local. Run `npm run test:doubao` for protocol tests. The detailed [Doubao guide](docs/doubao.md) is currently in Chinese. The following instructions about launching from WorkRoot and trusting Hooks apply to Claude Code and Codex.
 
 ## 3. First use
 

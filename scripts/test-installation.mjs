@@ -40,6 +40,13 @@ try {
   assert.notEqual(migrated.revision, first.revision);
   await assert.rejects(fs.access(path.join(migrated.stateDir, 'profile.json')), { code: 'ENOENT' });
   assert.deepEqual(await fs.readdir(newMd), []);
+  const originalHooks = await fs.readFile(path.join(home, '.claude/settings.json'), 'utf8');
+  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', path.resolve('scripts/Install-OneClick.ps1'), '-ConfigFile', settingsFile, '-Clients', 'doubao', '-ClientHome', home, ...(!schedule ? ['-SkipTask'] : [])], { timeout: 60000, windowsHide: true });
+  const desktop = await read(path.join(home, '.company-knowledge/doubao-stdio.json'));
+  const spec = desktop.mcpServers['company-knowledge'];
+  assert.equal(spec.command, process.execPath);
+  assert.ok(spec.args.includes('doubao')); assert.ok(spec.args.includes(config));
+  assert.equal(await fs.readFile(path.join(home, '.claude/settings.json'), 'utf8'), originalHooks);
   if (schedule) {
     const status = await read(path.join(migrated.stateDir, 'watcher-status.json'));
     assert.equal(status.status, 'awaiting_name');
@@ -47,7 +54,7 @@ try {
     const task = await run('powershell.exe', ['-NoProfile','-NonInteractive','-Command', `(Get-ScheduledTask -TaskName ${q(info.TaskName)}).State`], { windowsHide: true });
     assert.match(task.stdout, /Running/);
   }
-  console.log(JSON.stringify({ passed: true, repeatedInstall: true, isolatedClientConfig: true, employeeNotPrefilled: true, markdownMigration: true, optionalStateDir: true, scheduledWatcher: schedule, targetArtifacts: 0 }));
+  console.log(JSON.stringify({ passed: true, repeatedInstall: true, isolatedClientConfig: true, employeeNotPrefilled: true, markdownMigration: true, optionalStateDir: true, doubaoStdioExport: true, scheduledWatcher: schedule, targetArtifacts: 0 }));
 } finally {
   if (schedule && await fs.access(config).then(()=>true,()=>false)) {
     await run('powershell.exe', ['-NoProfile','-NonInteractive','-File',path.resolve('scripts/Register-ArchiveTask.ps1'),'-ConfigPath',config,'-Remove'], { windowsHide: true }).catch(()=>{});

@@ -54,6 +54,12 @@ if (process.platform !== 'darwin') {
     c = await loadConfig(config);
     assert.equal((await getProfile(c)).id, p.id); assert.equal(c.stateRoot, state);
     assert.equal((await jobs(c)).length, 1); assert.ok((await jobs(c))[0].destination.startsWith(newMd));
+    const beforeDesktop = await fs.readFile(path.join(home, '.claude/settings.json'), 'utf8');
+    await run('/bin/bash', [...command, '--clients', 'doubao'], { env, timeout: 60000 });
+    const desktop = JSON.parse(await fs.readFile(path.join(home, '.company-knowledge/doubao-stdio.json'), 'utf8'));
+    assert.ok(desktop.mcpServers['company-knowledge'].args.includes(config));
+    assert.ok(desktop.mcpServers['company-knowledge'].args.includes('doubao'));
+    assert.equal(await fs.readFile(path.join(home, '.claude/settings.json'), 'utf8'), beforeDesktop);
     if (service) {
       serviceAttempted = true;
       await macosService(config); await macosService(config);
@@ -62,7 +68,7 @@ if (process.platform !== 'darwin') {
       while ((await jobs(c)).length < 2 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 500));
       assert.equal((await jobs(c)).length, 2);
     }
-    console.log(JSON.stringify({ passed: true, nativeMacInstaller: true, isolatedClientRegistration: true, realHookProcesses: true, restrictedPathHooks: true, sharedIdentity: true, deduplicated: true, historicalFilesIgnored: true, markdownMigration: true, launchAgent: service, realModelConversation: false, realNas: false }));
+    console.log(JSON.stringify({ passed: true, nativeMacInstaller: true, isolatedClientRegistration: true, realHookProcesses: true, restrictedPathHooks: true, sharedIdentity: true, deduplicated: true, historicalFilesIgnored: true, markdownMigration: true, doubaoStdioExport: true, launchAgent: service, realModelConversation: false, realNas: false }));
   } finally {
     // Do not remove files beneath a still-running service if cleanup fails.
     if (serviceAttempted) await macosService(config, { remove: true });
