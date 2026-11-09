@@ -105,7 +105,7 @@ macOS：
 bash ./scripts/install-macos.sh --config-file ./company-knowledge.local.md --clients doubao
 ```
 
-安装器准备共享状态和后台监听，生成本地 `doubao-stdio.json`，并打印 Node 命令与参数。将这些字段填写到豆包“自定义连接器 → STDIO”，按客户端正常流程启用；安装器不改豆包内部设置。
+安装器准备共享状态和后台监听，生成本地 `doubao-stdio.json`，并打印 `commandField`、参数数组和整条 `commandLine`。将这些字段填写到豆包“自定义连接器 → STDIO”，按客户端正常流程启用；命令路径含空格时必须使用带引号的 `commandField`，否则豆包会按空格拆分并报 `COMMAND_NOT_FOUND`。安装器不改豆包内部设置。
 
 豆包工作任务先调用 `kb_begin_work` 选定白名单内目录，再携带返回的 `work_session` 读写资料、登记姓名。数据工具会检查本次范围；不从桌面进程启动目录推断工作项目。结束时调用 `kb_end_work`，需要暂停所有后台归档时用 `kb_work_switch`。
 

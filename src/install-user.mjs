@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { mergeHooks } from './install.mjs';
 import { atomicJson, exists, loadConfig, validateConfig, inside } from './storage.mjs';
 import { hookCommand, isNodeCommand } from './runtime-command.mjs';
-import { doubaoRegistration, doubaoRegistrationPath } from './desktop-registration.mjs';
+import { doubaoClientHints, doubaoRegistration, doubaoRegistrationPath } from './desktop-registration.mjs';
 const begin = '# BEGIN company-knowledge (managed by knowledge-mcp)';
 const end = '# END company-knowledge (managed by knowledge-mcp)';
 function block(text) {
@@ -71,6 +71,7 @@ export async function installUser(options, locations) {
     previousNodes.add(command);
   }
   const desktopSpec = doubaoRegistration(configPath);
+  const desktopHints = wantsDoubao ? doubaoClientHints(desktopSpec.mcpServers['company-knowledge']) : null;
   const previousDesktop = json(await read(globalPaths.doubaoMcp));
   if (previousDesktop.mcpServers?.['company-knowledge']) {
     const previous = previousDesktop.mcpServers['company-knowledge'];
@@ -135,8 +136,8 @@ export async function installUser(options, locations) {
     throw error;
   }
   const result = { client, scope: 'user', configPath, sharedState: config.stateDir, workRoots, globalPaths, enabledAt: config.enabledAt, changedFiles: mutations.map(m => m.file), backups,
-    ...(wantsDoubao ? { doubao: { registrationFile: globalPaths.doubaoMcp, transport: 'stdio', ...desktopSpec.mcpServers['company-knowledge'], clientConfigurationApplied: false, clientHooks: false } } : {}),
-    next: wantsDoubao ? '豆包 STDIO 接入文件已生成，请将 command 和 args 填入豆包自定义连接器；尚未修改豆包内部设置。工作请求先 kb_begin_work，再按提示询问姓名。其他客户端需重启并信任 Hook。' : '重启客户端并信任 Hook；从配置的工作目录打开新会话。目标可访问后 Agent 主动询问姓名。' };
+    ...(wantsDoubao ? { doubao: { registrationFile: globalPaths.doubaoMcp, transport: 'stdio', ...desktopSpec.mcpServers['company-knowledge'], ...desktopHints, clientConfigurationApplied: false, clientHooks: false } } : {}),
+    next: wantsDoubao ? '豆包 STDIO 接入文件已生成。请把 command 与 args 填入豆包自定义连接器；命令路径含空格时必须使用 commandField 的带引号形式，只有一个输入框时使用 commandLine，否则豆包会报 COMMAND_NOT_FOUND。尚未修改豆包内部设置。工作请求先 kb_begin_work，再按提示询问姓名。其他客户端需重启并信任 Hook。' : '重启客户端并信任 Hook；从配置的工作目录打开新会话。目标可访问后 Agent 主动询问姓名。' };
   await atomicJson(path.join(config.stateDir, 'global-installation.json'), result);
   return result;
 }

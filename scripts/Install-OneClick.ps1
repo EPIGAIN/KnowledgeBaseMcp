@@ -69,8 +69,12 @@ try {
     if ($installed.doubao) {
         Write-Host '豆包接入准备完成。还需在豆包的自定义连接器中填写以下 STDIO 参数：' -ForegroundColor Green
         Write-Host ('配置文件：'+$installed.doubao.registrationFile)
-        Write-Host ('命令：'+$installed.doubao.command)
+        Write-Host ('命令（粘贴到“命令”框）：'+$installed.doubao.commandField)
         Write-Host ('参数数组：'+(ConvertTo-Json -InputObject @($installed.doubao.args) -Compress))
+        Write-Host ('整条命令行（只有一个输入框时）：'+$installed.doubao.commandLine)
+        if ($installed.doubao.requiresQuoting) {
+            Write-Host '注意：豆包把“命令”框按空格拆分参数。上面的命令已加英文双引号；漏掉引号会报 CONNECTOR_STDIO_EXECUTABLE_NOT_FOUND: COMMAND_NOT_FOUND。' -ForegroundColor Yellow
+        }
         Write-Host '启用连接器后，在工作任务中开始工作会话；目标可访问时再由 Agent 询问姓名。没有安装豆包 Hook。'
     } else {
         Write-Host '配置完成。重启客户端，从已配置的工作目录打开新对话，并按正常流程信任 Hook。' -ForegroundColor Green
