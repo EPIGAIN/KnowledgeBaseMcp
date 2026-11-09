@@ -105,7 +105,7 @@ macOS:
 bash ./scripts/install-macos.sh --config-file ./company-knowledge.local.md --clients doubao
 ```
 
-The installer prepares shared state and the background worker, exports a private `doubao-stdio.json`, and prints the absolute Node command and argument array. Enter these fields in Doubao's custom STDIO connector and enable it through the normal client workflow. The installer does not edit Doubao's internal settings.
+The installer prepares shared state and the background worker, exports a private `doubao-stdio.json`, and prints `commandField`, the argument array, and a full `commandLine`. Enter these fields in Doubao's custom STDIO connector and enable it through the normal client workflow. When the command path contains spaces, paste the quoted `commandField`; otherwise Doubao splits it at the space and reports `COMMAND_NOT_FOUND`. The installer does not edit Doubao's internal settings.
 
 For an explicit work request, call `kb_profile`, then `kb_begin_work` with an allowlisted work directory. Include the returned `work_session` in subsequent data calls and `kb_setup` after the employee answers the name question. No desktop launch directory is treated as the current project. Each token is restricted to the selected directory, remains in that MCP process only, expires after four hours, and is invalidated by configuration migration. End it with `kb_end_work`; use `kb_work_switch` to pause the shared background worker as well.
 

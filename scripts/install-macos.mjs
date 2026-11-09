@@ -53,8 +53,10 @@ try {
     if (installed.doubao) {
       console.log('豆包接入准备完成。还需在豆包自定义连接器中填写 STDIO 参数，没有安装豆包 Hook。');
       console.log('接入文件：' + installed.doubao.registrationFile);
-      console.log('命令：' + installed.doubao.command);
+      console.log('命令（粘贴到“命令”框）：' + installed.doubao.commandField);
       console.log('参数数组：' + JSON.stringify(installed.doubao.args));
+      console.log('整条命令行（只有一个输入框时）：' + installed.doubao.commandLine);
+      if (installed.doubao.requiresQuoting) console.log('注意：豆包把“命令”框按空格拆分参数；上面已加引号，漏掉会报 CONNECTOR_STDIO_EXECUTABLE_NOT_FOUND: COMMAND_NOT_FOUND。');
       console.log('工作任务先开始工作会话；目标可访问后由 Agent 询问姓名。其他客户端需重启并信任 Hook。');
     } else {
       console.log('配置完成。重启客户端，从已配置的工作目录打开新对话，按正常流程信任 Hook。');

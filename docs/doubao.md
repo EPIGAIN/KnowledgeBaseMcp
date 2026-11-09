@@ -32,11 +32,11 @@ bash ./scripts/install-macos.sh --config-file "<配置MD路径>" --clients douba
 | --- | --- |
 | 名称 | 公司知识库（或 `company-knowledge`） |
 | 传输方式 | STDIO / 本地命令 |
-| 命令 | 安装输出中的 `command`，即 Node 可执行文件的绝对路径 |
+| 命令 | 安装输出中的 `commandField`；含空格时为带引号形式 |
 | 参数 | 安装输出中的 `args`，保持原有顺序和每个参数边界 |
 | 环境变量 | 无需额外填写 |
 
-`doubao-stdio.json` 是本项目生成的接入资料，不是猜测的豆包内部设置路径。如果界面支持导入 `mcpServers` JSON，可以导入它；如果只有参数列表，就逐项填入。不要把整个 JSON 当作启动命令。参数中包含空格的路径必须保持为同一个参数。
+`doubao-stdio.json` 是本项目生成的接入资料，不是猜测的豆包内部设置路径。如果界面支持导入 `mcpServers` JSON，可以导入它；如果只有参数列表，就逐项填入，命令框使用安装输出的 `commandField`。不要把整个 JSON 当作启动命令。参数中包含空格的路径必须保持为同一个参数。
 
 生成内容形如下面的占位示例；不要直接使用未替换的示例：
 
@@ -57,6 +57,26 @@ bash ./scripts/install-macos.sh --config-file "<配置MD路径>" --clients douba
   }
 }
 ```
+
+### 命令路径中的空格
+
+豆包连接器的“命令”框可能按命令行解析：完整路径里的空格会被当成参数分隔符。Windows 的 Node 常见路径 `C:\Program Files\nodejs\node.exe`，以及豆包运行时位于 `...\Doubao\User Data\...` 的 Node 路径，都含有空格。直接粘贴时命令会在第一个空格处截断，客户端报：
+
+```text
+CONNECTOR_STDIO_EXECUTABLE_NOT_FOUND: COMMAND_NOT_FOUND
+```
+
+因此安装输出同时给出三种形式：
+
+| 输出字段 | 用途 |
+| --- | --- |
+| `command` | `doubao-stdio.json` 中的结构化未加引号值，供支持 JSON 导入的版本使用 |
+| `commandField` | 填入“命令”框的值：路径含空格时自动加英文双引号，不含空格时与原值相同 |
+| `commandLine` | 界面只有一个整条命令输入框时，直接粘贴这一整行 |
+
+例如命令路径含空格时，`commandField` 形如 `"C:\Users\<用户名>\AppData\Local\Doubao\User Data\...\node\node.exe"`。引号只用于界面按命令行解析的输入框，不要往 `doubao-stdio.json` 的 `command` 值里再加一层引号。如果这个豆包版本把“命令”当作纯可执行文件路径而不是命令行，先试未加引号的 `command`；出现 `COMMAND_NOT_FOUND` 或被截断的路径时再用 `commandField`。
+
+NAS 路径和后台任务不需要为此错误重装；含空格的参数仍按数组逐项填写。
 
 保存、启用并按豆包正常流程授权。在“本地电脑”的工作任务中选择这个连接器。接口无需公网端口、HTTP 转发、NAS 密码或单独 API Key。NAS 必须由当前操作系统用户正常访问；Mac 先挂载共享卷。
 

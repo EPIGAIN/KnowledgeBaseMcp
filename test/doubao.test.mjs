@@ -3,13 +3,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { installUser } from '../src/install-user.mjs';
 import { loadConfig, jobs, getProfile, setup } from '../src/storage.mjs';
 import { createWatcher } from '../src/watcher.mjs';
 import { createDesktopContexts } from '../src/desktop-context.mjs';
+import { commandLineValue, doubaoClientHints, quoteCommandValue, quoteWindowsArgument } from '../src/desktop-registration.mjs';
 const connections = new WeakMap();
+const execFileAsync = promisify(execFile);
 
 async function fixture(t) {
   connections.set(t, []);
@@ -193,4 +197,66 @@ test('Doubao STDIO arguments preserve spaces and quotes without generating shell
   assert.equal((await desktop.call('kb_profile')).gate.status, 'work_context_required');
   assert.ok(installed.doubao.args.includes(installed.configPath));
   await assert.rejects(fs.access(path.join(home, '.claude')), { code: 'ENOENT' });
+});
+
+test('Doubao command hints quote spaces without changing the structured JSON export', async t => {
+  const f = await fixture(t);
+  const { installed } = await f.apply();
+  const exported = JSON.parse(await fs.readFile(installed.doubao.registrationFile, 'utf8'));
+  const spec = exported.mcpServers['company-knowledge'];
+  // The JSON import path keeps the raw executable path; quoting is only for the
+  // connector's command-line fields.
+  assert.equal(spec.command, process.execPath);
+  assert.equal(spec.command.includes('"'), false);
+  const expected = doubaoClientHints(spec);
+  assert.equal(installed.doubao.commandField, expected.commandField);
+  assert.equal(installed.doubao.commandLine, expected.commandLine);
+  assert.equal(installed.doubao.requiresQuoting, /[\s"]/.test(process.execPath));
+  if (installed.configPath.includes(' ')) assert.ok(installed.doubao.commandLine.includes(quoteCommandValue(installed.configPath, { platform: process.platform })));
+  assert.equal(installed.doubao.commandField, /[\s"]/.test(process.execPath) ? `"${process.execPath}"` : process.execPath);
+});
+
+test('Doubao command quoting handles Windows spaces, quotes and trailing backslashes', () => {
+  const command = 'C:\\DoubaoRuntime\\User Data\\sandbox_runtime\\bases\\abc\\node\\node.exe';
+  const spec = {
+    command,
+    args: ['D:\\mcp repo\\bin\\kb.mjs', 'serve', '--client', 'doubao', '--config', 'C:\\CompanyData\\CompanyKnowledgeMcp\\config.json']
+  };
+  const hints = doubaoClientHints(spec, { platform: 'win32' });
+  assert.equal(hints.requiresQuoting, true);
+  assert.equal(hints.commandField, `"${command}"`);
+  assert.equal(hints.commandLine, `"${command}" "D:\\mcp repo\\bin\\kb.mjs" serve --client doubao --config C:\\CompanyData\\CompanyKnowledgeMcp\\config.json`);
+  assert.equal(quoteWindowsArgument('C:\\ProgramData\\nodejs\\node.exe'), 'C:\\ProgramData\\nodejs\\node.exe');
+  assert.equal(quoteWindowsArgument('has space\\'), '"has space\\\\"');
+  assert.equal(quoteWindowsArgument('a"b'), '"a\\"b"');
+  const plain = doubaoClientHints({ command: 'C:\\ProgramData\\nodejs\\node.exe', args: ['serve'] }, { platform: 'win32' });
+  assert.equal(plain.requiresQuoting, false);
+  assert.equal(plain.commandField, 'C:\\ProgramData\\nodejs\\node.exe');
+});
+
+test('Doubao command quoting follows POSIX shell quoting and rejects control characters', () => {
+  const hints = doubaoClientHints({ command: '/opt/My Node/bin/node', args: ['/home/<user>/my repo/kb.mjs', "it's", 'serve'] }, { platform: 'linux' });
+  assert.equal(hints.requiresQuoting, true);
+  assert.equal(hints.commandField, "'/opt/My Node/bin/node'");
+  assert.equal(hints.commandLine, "'/opt/My Node/bin/node' '/home/<user>/my repo/kb.mjs' 'it'\"'\"'s' serve");
+  assert.equal(quoteCommandValue('/usr/local/bin/node', { platform: 'linux' }), "'/usr/local/bin/node'");
+  assert.throws(() => quoteCommandValue('bad\npath', { platform: 'linux' }), /换行或空字符/);
+});
+
+test('Doubao single-line command starts the same executable and arguments through a shell', { skip: process.platform === 'win32' }, async () => {
+  const root = path.resolve('.test-output', 'doubao-command-' + randomUUID());
+  const spaced = path.join(root, "it's a folder");
+  await fs.mkdir(spaced, { recursive: true });
+  const script = path.join(spaced, 'print-args.mjs');
+  await fs.writeFile(script, 'process.stdout.write(JSON.stringify(process.argv.slice(2)));\n');
+  try {
+    const spec = { command: process.execPath, args: [script, 'argument with spaces', "quote's"] };
+    const line = commandLineValue(spec, { platform: 'linux' });
+    assert.ok(line.includes("it'\"'\"'s a folder"));
+    const { stdout } = await execFileAsync('/bin/sh', ['-c', line]);
+    assert.deepEqual(JSON.parse(stdout), ['argument with spaces', "quote's"]);
+  } finally {
+    assert.equal(path.dirname(root), path.resolve('.test-output'));
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
